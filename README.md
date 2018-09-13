@@ -1,6 +1,6 @@
 # GPflow
 
-Copy of GPflow master
+Fork of GPflow
 
 ## Citing GPflow
 

@@ -1,3 +1,4 @@
+import tensorflow as tf
 # Copyright 2017 the GPflow authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,12 +25,15 @@ class ProbabilityDistribution:
     """
     pass
 
+class TGaussian(ProbabilityDistribution):
+    def __init__(self, mu, cov):
+        self.mu = mu # D x N
+        self.cov = cov # D x N x N
 
 class Gaussian(ProbabilityDistribution):
-    def __init__(self, mu, cov):
+    def __init__(self, mu, cov, transposed=False):
         self.mu = mu  # N x D
         self.cov = cov  # N x D x D
-
 
 class DiagonalGaussian(ProbabilityDistribution):
     def __init__(self, mu, cov):
