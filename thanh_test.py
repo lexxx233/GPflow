@@ -19,7 +19,6 @@ Y3 = Y1 - Y2
 Y4 = Y1 + Y2
 Y5 = np.multiply(Y1, Y2)
 
-
 Y = np.stack((Y1, Y2, Y3, Y4, Y5), axis=1)
 
 m = VGPDS(Y, T, kern, num_latent=2)

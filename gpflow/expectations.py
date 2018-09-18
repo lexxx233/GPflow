@@ -234,11 +234,7 @@ def expectation(p, obj1, obj2=None, nghp=None):
 # ================================ RBF Kernel =================================
 
 #PSI0
-@dispatch(TGaussian, kernels.RBF, type(None), type(None), type(None))
-def _expectation(p, kern, none1, none2, none3, nghp=None):
-    return kern.Kdiag(p.mu)
-
-@dispatch(Gaussian, kernels.RBF, type(None), type(None), type(None))
+@dispatch((TGaussian, Gaussian), kernels.RBF, type(None), type(None), type(None))
 def _expectation(p, kern, none1, none2, none3, nghp=None):
     """
     Compute the expectation:
@@ -251,31 +247,6 @@ def _expectation(p, kern, none1, none2, none3, nghp=None):
 
 
 #PSI1
-@dispatch(TGaussian, kernels.RBF, InducingPoints, type(None), type(None))
-def _expectation(p, kern, feat, none1, none2, nghp=None):
-    print('TGaussian Psi1')
-    print(p.cov)
-    print(p.mu)
-    with params_as_tensors_for(kern, feat):
-        Xcov = kern._slice_cov(p.cov)
-        Z, Xmu = kern._slice(feat.Z, p.mu)
-        D = tf.shape(Xmu)[0]
-
-        if kern.ARD:
-            lengthscales = kern.lengthscales
-        else:
-            lengthscales = tf.zeros((D,), dtype=settings.tf_float) + kern.lengthscales
-
-        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  # DxNxN
-
-        print(tf.Tensor.get_shape(chol_L_plus_Xcov))
-
-
-        all_diffs = tf.transpose(Z) - tf.expand_dims(Xmu, 2) # NxDxM
-
-    return 0
-
-
 @dispatch(Gaussian, kernels.RBF, InducingPoints, type(None), type(None))
 def _expectation(p, kern, feat, none1, none2, nghp=None):
     """
@@ -285,7 +256,6 @@ def _expectation(p, kern, feat, none1, none2, nghp=None):
 
     :return: NxM
     """
-
     with params_as_tensors_for(kern, feat):
         # use only active dimensions
         Xcov = kern._slice_cov(p.cov)
@@ -309,83 +279,37 @@ def _expectation(p, kern, feat, none1, none2, nghp=None):
 
         return kern.variance * (determinants[:, None] * exponent_mahalanobis)
 
-
-@dispatch(Gaussian, mean_functions.Identity, type(None), kernels.RBF, InducingPoints)
-def _expectation(p, mean, none, kern, feat, nghp=None):
-    """
-    Compute the expectation:
-    expectation[n] = <x_n K_{x_n, Z}>_p(x_n)
-        - K_{.,.} :: RBF kernel
-    :return: NxDxM
-    """
-
-    Xmu, Xcov = p.mu, p.cov
-
-    with tf.control_dependencies([tf.assert_equal(
-            tf.shape(Xmu)[1], tf.constant(kern.input_dim, settings.tf_int),
-            message="Currently cannot handle slicing in exKxz.")]):
-        Xmu = tf.identity(Xmu)
+@dispatch(TGaussian, kernels.RBF, InducingPoints, type(None), type(None))
+def _expectation(p, kern, feat, none1, none2, nghp=None):
+    print('TGaussian Psi1')
 
     with params_as_tensors_for(kern, feat):
-        D = tf.shape(Xmu)[1]
-        lengthscales = kern.lengthscales if kern.ARD \
-            else tf.zeros((D,), dtype=settings.float_type) + kern.lengthscales
+        Xcov = kern._slice_cov_t(p.cov) # NxQxN
+        Z, Xmu = kern._slice(feat.Z, p.mu)
+        D = tf.shape(Xmu)[0]
 
-        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  # NxDxD
-        all_diffs = tf.transpose(feat.Z) - tf.expand_dims(Xmu, 2)  # NxDxM
+        if kern.ARD:
+            lengthscales = kern.lengthscales
+        else:
+            lengthscales = tf.zeros((D,), dtype=settings.tf_float) + kern.lengthscales
+
+        print('cholesky of the impossible!')
+        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  # QxQ + NxQxN
+        print(chol_L_plus_Xcov)
+        all_diffs = tf.transpose(Z) - tf.expand_dims(Xmu, 2) # NxDxM
+        print(tf.transpose(Z))
+        print(tf.expand_dims(Xmu, 2))
+        print(all_diffs)
+
+        exponent_mahalanobis = tf.matrix_triangular_solve(chol_L_plus_Xcov, all_diffs, lower=True)  # NxDxM  DxNxM
+        exponent_mahalanobis = tf.reduce_sum(tf.square(exponent_mahalanobis), 1)  # NxM
+        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
 
         sqrt_det_L = tf.reduce_prod(lengthscales)
         sqrt_det_L_plus_Xcov = tf.exp(tf.reduce_sum(tf.log(tf.matrix_diag_part(chol_L_plus_Xcov)), axis=1))
         determinants = sqrt_det_L / sqrt_det_L_plus_Xcov  # N
 
-        exponent_mahalanobis = tf.cholesky_solve(chol_L_plus_Xcov, all_diffs)  # NxDxM
-        non_exponent_term = tf.matmul(Xcov, exponent_mahalanobis, transpose_a=True)
-        non_exponent_term = tf.expand_dims(Xmu, 2) + non_exponent_term  # NxDxM
-
-        exponent_mahalanobis = tf.reduce_sum(all_diffs * exponent_mahalanobis, 1)  # NxM
-        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
-
-        return kern.variance * (determinants[:, None] * exponent_mahalanobis)[:, None, :] * non_exponent_term
-
-
-@dispatch(MarkovGaussian, mean_functions.Identity, type(None), kernels.RBF, InducingPoints)
-def _expectation(p, mean, none, kern, feat, nghp=None):
-    """
-    Compute the expectation:
-    expectation[n] = <x_{n+1} K_{x_n, Z}>_p(x_{n:n+1})
-        - K_{.,.} :: RBF kernel
-        - p       :: MarkovGaussian distribution (p.cov 2x(N+1)xDxD)
-
-    :return: NxDxM
-    """
-    Xmu, Xcov = p.mu, p.cov
-
-    with tf.control_dependencies([tf.assert_equal(
-            tf.shape(Xmu)[1], tf.constant(kern.input_dim, settings.tf_int),
-            message="Currently cannot handle slicing in exKxz.")]):
-        Xmu = tf.identity(Xmu)
-
-    with params_as_tensors_for(kern, feat):
-        D = tf.shape(Xmu)[1]
-        lengthscales = kern.lengthscales if kern.ARD \
-            else tf.zeros((D,), dtype=settings.float_type) + kern.lengthscales
-
-        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov[0, :-1])  # NxDxD
-        all_diffs = tf.transpose(feat.Z) - tf.expand_dims(Xmu[:-1], 2)  # NxDxM
-
-        sqrt_det_L = tf.reduce_prod(lengthscales)
-        sqrt_det_L_plus_Xcov = tf.exp(tf.reduce_sum(tf.log(tf.matrix_diag_part(chol_L_plus_Xcov)), axis=1))
-        determinants = sqrt_det_L / sqrt_det_L_plus_Xcov  # N
-
-        exponent_mahalanobis = tf.cholesky_solve(chol_L_plus_Xcov, all_diffs)  # NxDxM
-        non_exponent_term = tf.matmul(Xcov[1, :-1], exponent_mahalanobis, transpose_a=True)
-        non_exponent_term = tf.expand_dims(Xmu[1:], 2) + non_exponent_term  # NxDxM
-
-        exponent_mahalanobis = tf.reduce_sum(all_diffs * exponent_mahalanobis, 1)  # NxM
-        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
-
-        return kern.variance * (determinants[:, None] * exponent_mahalanobis)[:, None, :] * non_exponent_term
-
+    return kern.variance * (determinants[:, None] * exponent_mahalanobis)
 
 #PSI2
 @dispatch(TGaussian, kernels.RBF, InducingPoints, kernels.RBF, InducingPoints)
@@ -503,6 +427,85 @@ def _expectation(p, kern1, feat1, kern2, feat2, nghp=None):
 
         return Ka.variance * Kb.variance * sqrt_exp_dist * \
                tf.reshape(dets, [N, 1, 1]) * exp_mahalanobis
+
+
+@dispatch(Gaussian, mean_functions.Identity, type(None), kernels.RBF, InducingPoints)
+def _expectation(p, mean, none, kern, feat, nghp=None):
+    """
+    Compute the expectation:
+    expectation[n] = <x_n K_{x_n, Z}>_p(x_n)
+        - K_{.,.} :: RBF kernel
+    :return: NxDxM
+    """
+
+    Xmu, Xcov = p.mu, p.cov
+
+    with tf.control_dependencies([tf.assert_equal(
+            tf.shape(Xmu)[1], tf.constant(kern.input_dim, settings.tf_int),
+            message="Currently cannot handle slicing in exKxz.")]):
+        Xmu = tf.identity(Xmu)
+
+    with params_as_tensors_for(kern, feat):
+        D = tf.shape(Xmu)[1]
+        lengthscales = kern.lengthscales if kern.ARD \
+            else tf.zeros((D,), dtype=settings.float_type) + kern.lengthscales
+
+        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  # NxDxD
+        all_diffs = tf.transpose(feat.Z) - tf.expand_dims(Xmu, 2)  # NxDxM
+
+        sqrt_det_L = tf.reduce_prod(lengthscales)
+        sqrt_det_L_plus_Xcov = tf.exp(tf.reduce_sum(tf.log(tf.matrix_diag_part(chol_L_plus_Xcov)), axis=1))
+        determinants = sqrt_det_L / sqrt_det_L_plus_Xcov  # N
+
+        exponent_mahalanobis = tf.cholesky_solve(chol_L_plus_Xcov, all_diffs)  # NxDxM
+        non_exponent_term = tf.matmul(Xcov, exponent_mahalanobis, transpose_a=True)
+        non_exponent_term = tf.expand_dims(Xmu, 2) + non_exponent_term  # NxDxM
+
+        exponent_mahalanobis = tf.reduce_sum(all_diffs * exponent_mahalanobis, 1)  # NxM
+        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
+
+        return kern.variance * (determinants[:, None] * exponent_mahalanobis)[:, None, :] * non_exponent_term
+
+
+@dispatch(MarkovGaussian, mean_functions.Identity, type(None), kernels.RBF, InducingPoints)
+def _expectation(p, mean, none, kern, feat, nghp=None):
+    """
+    Compute the expectation:
+    expectation[n] = <x_{n+1} K_{x_n, Z}>_p(x_{n:n+1})
+        - K_{.,.} :: RBF kernel
+        - p       :: MarkovGaussian distribution (p.cov 2x(N+1)xDxD)
+
+    :return: NxDxM
+    """
+    Xmu, Xcov = p.mu, p.cov
+
+    with tf.control_dependencies([tf.assert_equal(
+            tf.shape(Xmu)[1], tf.constant(kern.input_dim, settings.tf_int),
+            message="Currently cannot handle slicing in exKxz.")]):
+        Xmu = tf.identity(Xmu)
+
+    with params_as_tensors_for(kern, feat):
+        D = tf.shape(Xmu)[1]
+        lengthscales = kern.lengthscales if kern.ARD \
+            else tf.zeros((D,), dtype=settings.float_type) + kern.lengthscales
+
+        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov[0, :-1])  # NxDxD
+        all_diffs = tf.transpose(feat.Z) - tf.expand_dims(Xmu[:-1], 2)  # NxDxM
+
+        sqrt_det_L = tf.reduce_prod(lengthscales)
+        sqrt_det_L_plus_Xcov = tf.exp(tf.reduce_sum(tf.log(tf.matrix_diag_part(chol_L_plus_Xcov)), axis=1))
+        determinants = sqrt_det_L / sqrt_det_L_plus_Xcov  # N
+
+        exponent_mahalanobis = tf.cholesky_solve(chol_L_plus_Xcov, all_diffs)  # NxDxM
+        non_exponent_term = tf.matmul(Xcov[1, :-1], exponent_mahalanobis, transpose_a=True)
+        non_exponent_term = tf.expand_dims(Xmu[1:], 2) + non_exponent_term  # NxDxM
+
+        exponent_mahalanobis = tf.reduce_sum(all_diffs * exponent_mahalanobis, 1)  # NxM
+        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
+
+        return kern.variance * (determinants[:, None] * exponent_mahalanobis)[:, None, :] * non_exponent_term
+
+
 
 
 # =============================== Linear Kernel ===============================

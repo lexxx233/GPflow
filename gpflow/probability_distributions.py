@@ -27,7 +27,7 @@ class ProbabilityDistribution:
 
 class TGaussian(ProbabilityDistribution):
     def __init__(self, mu, cov):
-        self.mu = mu # D x N
+        self.mu = mu # N x D
         self.cov = cov # D x N x N
 
 class Gaussian(ProbabilityDistribution):
