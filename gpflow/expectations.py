@@ -167,7 +167,6 @@ def _quadrature_expectation(p, obj1, feature1, obj2, feature2, num_gauss_hermite
 
 
 # =========================== ANALYTIC EXPECTATIONS ===========================
-
 def expectation(p, obj1, obj2=None, nghp=None):
     """
     Compute the expectation <obj1(x) obj2(x)>_p(x)
@@ -232,6 +231,7 @@ def expectation(p, obj1, obj2=None, nghp=None):
 
 
 # ================================ RBF Kernel =================================
+# Goal for today - Finish implementing the epxectation functions
 
 #PSI0
 @dispatch((TGaussian, Gaussian), kernels.RBF, type(None), type(None), type(None))
@@ -281,29 +281,37 @@ def _expectation(p, kern, feat, none1, none2, nghp=None):
 
 @dispatch(TGaussian, kernels.RBF, InducingPoints, type(None), type(None))
 def _expectation(p, kern, feat, none1, none2, nghp=None):
+    """
+    Compute the expectation:
+    <K_{X, Z}>_p(X)
+        - K_{.,.} :: RBF kernel
+
+    remember in this case, p(X) is factorized not independently.
+
+    :return: NxM
+    """
     print('TGaussian Psi1')
 
     with params_as_tensors_for(kern, feat):
-        Xcov = kern._slice_cov_t(p.cov) # NxQxN
-        Z, Xmu = kern._slice(feat.Z, p.mu)
-        D = tf.shape(Xmu)[0]
+        Xcov = kern._slice_cov(p.cov) # QxNxN - because var distribution is factorized only per latent dimension
+        Z, Xmu = kern._slice(feat.Z, p.mu) # MxQ and NxQ
+
+        D = tf.shape(Xmu)[1] # Q
 
         if kern.ARD:
             lengthscales = kern.lengthscales
         else:
             lengthscales = tf.zeros((D,), dtype=settings.tf_float) + kern.lengthscales
 
-        print('cholesky of the impossible!')
-        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  # QxQ + NxQxN
+        #The entry of this covariance matrix is the variance
+        chol_L_plus_Xcov = tf.cholesky(tf.matrix_diag(lengthscales ** 2) + Xcov)  #QxNxN
         print(chol_L_plus_Xcov)
-        all_diffs = tf.transpose(Z) - tf.expand_dims(Xmu, 2) # NxDxM
-        print(tf.transpose(Z))
-        print(tf.expand_dims(Xmu, 2))
-        print(all_diffs)
+        all_diffs = tf.transpose(Z) - tf.expand_dims(Xmu, 2)
+        all_diffs = tf.transpose(all_diffs, [1, 0, 2]) # QxNxM
 
-        exponent_mahalanobis = tf.matrix_triangular_solve(chol_L_plus_Xcov, all_diffs, lower=True)  # NxDxM  DxNxM
-        exponent_mahalanobis = tf.reduce_sum(tf.square(exponent_mahalanobis), 1)  # NxM
-        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # NxM
+        exponent_mahalanobis = tf.matrix_triangular_solve(chol_L_plus_Xcov, all_diffs, lower=True)  # QxNxN  QxNxM
+        exponent_mahalanobis = tf.reduce_sum(tf.square(exponent_mahalanobis), 1)  # Q x M
+        exponent_mahalanobis = tf.exp(-0.5 * exponent_mahalanobis)  # Q x M
 
         sqrt_det_L = tf.reduce_prod(lengthscales)
         sqrt_det_L_plus_Xcov = tf.exp(tf.reduce_sum(tf.log(tf.matrix_diag_part(chol_L_plus_Xcov)), axis=1))
@@ -316,7 +324,6 @@ def _expectation(p, kern, feat, none1, none2, nghp=None):
 def _expectation(p, kern1, feat1, kern2, feat2, nghp=None):
 
     return 0
-
 
 @dispatch((Gaussian, DiagonalGaussian), kernels.RBF, InducingPoints, kernels.RBF, InducingPoints)
 def _expectation(p, kern1, feat1, kern2, feat2, nghp=None):

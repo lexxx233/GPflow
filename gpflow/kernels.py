@@ -137,30 +137,6 @@ class Kernel(Parameterized):
 
         return X, X2
 
-    def _slice_cov_t(self, cov):
-        """
-        Slice the correct dimensions for use in the kernel for covariance matrices.
-        This requires slicing the row *and* columns.
-        :param cov: Tensor of covariance matrices (D x N x N)
-        :return: N x self.input_dim x self.imput_dim
-        """
-        cov = tf.cond(tf.equal(tf.rank(cov), 2), lambda: tf.matrix_diag(cov), lambda: cov)
-        cov_shape = tf.shape(cov)
-        cov = tf.transpose(cov, [1, 0, 2])#N_Q_N
-        if isinstance(self.active_dims, slice):
-            print('activedim is slice')
-            cov = cov[..., self.active_dims, :]
-        else:
-            print('activedim is not slice')
-            cov_shape = tf.shape(cov)  # (Q,N,N)
-            covr = tf.reshape(cov, [-1, cov_shape[-1], cov_shape[-1]])
-            gather1 = tf.gather(tf.transpose(covr, [2, 1, 0]), self.active_dims)
-            gather2 = tf.gather(tf.transpose(gather1, [1, 0, 2]), self.active_dims)
-            cov = tf.reshape(tf.transpose(gather2, [2, 0, 1]),
-                             tf.concat([cov_shape[:-2], [len(self.active_dims), len(self.active_dims)]], 0))
-
-        return cov
-
     def _slice_cov(self, cov):
         """
         Slice the correct dimensions for use in the kernel, as indicated by
